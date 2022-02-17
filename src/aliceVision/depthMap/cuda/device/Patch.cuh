@@ -297,7 +297,7 @@ __device__ static float compNCCby3DptsYK(cudaTextureObject_t rcTex,
     // printf("gcr: R: %f, G: %f, B: %f, A: %f", gcr.x, gcr.y, gcr.z, gcr.w);
     // printf("gct: R: %f, G: %f, B: %f, A: %f", gct.x, gct.y, gct.z, gct.w);
 
-    if(gcr.w == 0.0f || gct.w == 0.0f)
+    if(gcr.w == 0.0f || gct.w == 0.0f)  // TODO DELI: check < 0.1f
         return CUDART_INF_F; // if no alpha, invalid pixel from input mask
 
     const float gammaC = _gammaC;

@@ -167,7 +167,7 @@ void estimateAndRefineDepthMaps(int cudaDeviceId, mvsUtils::MultiViewParams& mp,
             Refine refine(refineParams, mp, ic, rc, roi);
 
             // R camera has no T cameras
-            if(refine.getTCams().empty() || sgm.empty())
+            if(refine.getTCams().empty() || sgm.empty())  // TODO DELI
             {
                 ALICEVISION_LOG_INFO("No T cameras for camera rc: " << rc << ", generate default depth and sim maps.");
                 continue;

@@ -319,7 +319,7 @@ void Refine::refineRc(const DepthSimMap& sgmDepthSimMap)
     upscaleSgmDepthSimMap(sgmDepthSimMap, depthSimMapSgmUpscale);
 
     // filter masked pixels (alpha < 0.1)
-    filterMaskedPixels(depthSimMapSgmUpscale);
+    filterMaskedPixels(depthSimMapSgmUpscale); // TODO DELI: could be removed (as already checked in comp?)
 
     if(_refineParams.exportIntermediateResults)
     {

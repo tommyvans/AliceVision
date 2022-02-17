@@ -72,7 +72,7 @@ private:
         SingleDeviceCache();
         ~SingleDeviceCache() = default;
 
-        const int maxNbCameras = 2; // TODO: should be computed
+        const int maxNbCameras = 2; // TODO: should be computed and should be < MAX_CONSTANT_CAMERA_PARAM_SETS
         LRUCameraCache cameraCache; // Least Recently Used device camera id cache
         std::vector<std::unique_ptr<DeviceCamera>> cameras;
     };
