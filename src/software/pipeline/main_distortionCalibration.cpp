@@ -85,6 +85,7 @@ bool retrieveLines(std::vector<calibration::LineWithPoints>& lineWithPoints, con
             //Check we don't have a too small line which won't be easy to estimate
             if (line.points.size() < 10) continue;
 
+            
             lineWithPoints.push_back(line);
         }
 
