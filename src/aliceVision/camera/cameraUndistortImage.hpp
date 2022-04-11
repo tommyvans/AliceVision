@@ -38,7 +38,7 @@ void UndistortImage(
   else // There is distortion
   {
     const Vec2 center(imageIn.Width() * 0.5, imageIn.Height() * 0.5);
-    /*Vec2 ppCorrection(0.0, 0.0);
+    Vec2 ppCorrection(0.0, 0.0);
 
     if(correctPrincipalPoint)
     {
@@ -47,7 +47,7 @@ void UndistortImage(
         const camera::Pinhole* pinholePtr = dynamic_cast<const camera::Pinhole*>(intrinsicPtr);
         ppCorrection = pinholePtr->getPrincipalPoint() - center;
       }
-    }*/
+    }
     
     int widthRoi = imageIn.Width();
     int heightRoi = imageIn.Height();

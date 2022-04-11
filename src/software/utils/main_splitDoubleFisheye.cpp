@@ -90,7 +90,8 @@ int aliceVision_main(int argc, char** argv)
   // command-line parameters
   std::string verboseLevel = system::EVerboseLevel_enumToString(system::Logger::getDefaultVerboseLevel());
   std::string inputSfmDataPath; 
-  std::string outputSfmDataPath;
+  std::string outputSfm1DataPath;
+  std::string outputSfm2DataPath;
   int nbThreads = 3;
 
   po::options_description allParams("This program is used to extract multiple images from equirectangular or dualfisheye images or image folder\n"
@@ -100,8 +101,10 @@ int aliceVision_main(int argc, char** argv)
   requiredParams.add_options()
     ("input,i", po::value<std::string>(&inputSfmDataPath)->required(),
       "Input sfm data.")
-    ("output,o", po::value<std::string>(&outputSfmDataPath)->required(),
-      "Output sfm data");
+    ("output1,o1", po::value<std::string>(&outputSfm1DataPath)->required(),
+      "Output sfm data for first view")
+    ("output2,o2", po::value<std::string>(&outputSfm2DataPath)->required(),
+      "Output sfm data for second view");
 
   po::options_description optionalParams("Optional parameters");
   optionalParams.add_options()
@@ -154,7 +157,7 @@ int aliceVision_main(int argc, char** argv)
     return EXIT_FAILURE;
   }
 
-  boost::filesystem::path path(outputSfmDataPath);
+  boost::filesystem::path path(outputSfm1DataPath);
   std::string outputFolder = path.parent_path().string();
 
   //First make sure that there is only one intrinsic
@@ -171,17 +174,16 @@ int aliceVision_main(int argc, char** argv)
     return EXIT_FAILURE;
   }
 
-  //Create a rig with 2 images
-  sfmData.getRigs()[0] = sfmData::Rig(2);
-
   //Double intrinsics
   std::shared_ptr<camera::IntrinsicBase> it1(sfmData.getIntrinsics().begin()->second->clone());
   std::shared_ptr<camera::IntrinsicBase> it2(sfmData.getIntrinsics().begin()->second->clone());
-  sfmData.getIntrinsics().clear();
-  sfmData.getIntrinsics()[0] = it1;
-  sfmData.getIntrinsics()[1] = it2;
+  
   it1->setWidth(it1->w() / 2);
   it2->setWidth(it2->w() / 2);
+
+  sfmData::SfMData sfmDataOutput1, sfmDataOutput2;
+  sfmDataOutput1.getIntrinsics()[0] = it1;
+  sfmDataOutput2.getIntrinsics()[1] = it2;
   
 
   //Dirty trick to allow iterating with openmp
@@ -198,10 +200,6 @@ int aliceVision_main(int argc, char** argv)
 #pragma omp parallel for num_threads(nbThreads)
   for(int itView = 0; itView < views.size(); itView++)
   {
-    #pragma omp critical
-    {
-      toErase.push_back(views[itView]->getViewId());
-    }
     
     const std::string& imagePath = views[itView]->getImagePath();
 
@@ -218,21 +216,19 @@ int aliceVision_main(int argc, char** argv)
 
       std::shared_ptr<sfmData::View> vl = std::make_shared<sfmData::View>(v);
       vl->setViewId(itView * 2);
-      vl->setRigAndSubPoseId(0, 0);
       vl->setImagePath(pathOutputs[0]);
       vl->setWidth(views[itView]->getWidth() / 2);
       vl->setHeight(views[itView]->getHeight());
       vl->setIntrinsicId(0);
-      sfmData.getViews()[vl->getViewId()] = vl;
+      sfmDataOutput1.getViews()[vl->getViewId()] = vl;
 
       std::shared_ptr<sfmData::View> vr = std::make_shared<sfmData::View>(v);
       vr->setViewId(itView * 2 + 1);
-      vr->setRigAndSubPoseId(0, 1);
       vr->setImagePath(pathOutputs[1]);
       vr->setWidth(views[itView]->getWidth() / 2);
       vr->setHeight(views[itView]->getHeight());
       vr->setIntrinsicId(1);
-      sfmData.getViews()[vr->getViewId()] = vr;
+      sfmDataOutput2.getViews()[vr->getViewId()] = vr;
     }
   }
 
@@ -242,15 +238,17 @@ int aliceVision_main(int argc, char** argv)
     return EXIT_FAILURE;
   }
 
-  for (auto id : toErase)
+  // Export the SfMData scene in the expected format
+  if(!sfmDataIO::Save(sfmDataOutput1, outputSfm1DataPath, sfmDataIO::ESfMData::ALL))
   {
-    sfmData.getViews().erase(id);
+    ALICEVISION_LOG_ERROR("An error occurred while trying to save '" << outputSfm1DataPath << "'");
+    return EXIT_FAILURE;
   }
 
   // Export the SfMData scene in the expected format
-  if(!sfmDataIO::Save(sfmData, outputSfmDataPath, sfmDataIO::ESfMData::ALL))
+  if(!sfmDataIO::Save(sfmDataOutput2, outputSfm2DataPath, sfmDataIO::ESfMData::ALL))
   {
-    ALICEVISION_LOG_ERROR("An error occurred while trying to save '" << outputSfmDataPath << "'");
+    ALICEVISION_LOG_ERROR("An error occurred while trying to save '" << outputSfm2DataPath << "'");
     return EXIT_FAILURE;
   }
 

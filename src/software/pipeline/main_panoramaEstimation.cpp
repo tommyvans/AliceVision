@@ -225,7 +225,7 @@ int aliceVision_main(int argc, char **argv)
   if(!inputSfmData.getRigs().empty())
   {
     ALICEVISION_LOG_ERROR("Rigs are not currently supported in PanoramaEstimation.");
-    return EXIT_FAILURE;
+    //return EXIT_FAILURE;
   }
 
 
