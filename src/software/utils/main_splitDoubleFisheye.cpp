@@ -94,8 +94,8 @@ int aliceVision_main(int argc, char** argv)
   std::string outputSfm2DataPath;
   int nbThreads = 3;
 
-  po::options_description allParams("This program is used to extract multiple images from equirectangular or dualfisheye images or image folder\n"
-                                    "AliceVision split360Images");
+  po::options_description allParams("This program is used to extract multiple images from dualfisheye images \n"
+                                    "AliceVision splitDualFisheye");
 
   po::options_description requiredParams("Required parameters");
   requiredParams.add_options()
