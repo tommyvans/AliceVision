@@ -180,6 +180,8 @@ int aliceVision_main(int argc, char** argv)
   
   it1->setWidth(it1->w() / 2);
   it2->setWidth(it2->w() / 2);
+  it1->setSensorHeight(it1->sensorWidth());
+  it2->setSensorHeight(it2->sensorWidth());
 
   sfmData::SfMData sfmDataOutput1, sfmDataOutput2;
   sfmDataOutput1.getIntrinsics()[0] = it1;
@@ -214,8 +216,10 @@ int aliceVision_main(int argc, char** argv)
     {
       sfmData::View v = *views[itView];
 
+        
+
       std::shared_ptr<sfmData::View> vl = std::make_shared<sfmData::View>(v);
-      vl->setViewId(itView * 2);
+      vl->setViewId(itView * 2 + 1);
       vl->setImagePath(pathOutputs[0]);
       vl->setWidth(views[itView]->getWidth() / 2);
       vl->setHeight(views[itView]->getHeight());
@@ -223,7 +227,7 @@ int aliceVision_main(int argc, char** argv)
       sfmDataOutput1.getViews()[vl->getViewId()] = vl;
 
       std::shared_ptr<sfmData::View> vr = std::make_shared<sfmData::View>(v);
-      vr->setViewId(itView * 2 + 1);
+      vr->setViewId(itView * 2 + 2);
       vr->setImagePath(pathOutputs[1]);
       vr->setWidth(views[itView]->getWidth() / 2);
       vr->setHeight(views[itView]->getHeight());
