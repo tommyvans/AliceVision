@@ -21,89 +21,69 @@
 namespace aliceVision {
 namespace camera {
 
-/// Undistort an image according a given camera and its distortion model
-template <typename T>
-void UndistortImage(
-  const image::Image<T>& imageIn,
-  const camera::IntrinsicBase* intrinsicPtr,
-  image::Image<T>& image_ud,
-  T fillcolor,
-  bool correctPrincipalPoint = false, 
-  const oiio::ROI & roi = oiio::ROI())
-{
-  if (!intrinsicPtr->hasDistortion()) // no distortion, perform a direct copy
-  {
-    image_ud = imageIn;
-  }
-  else // There is distortion
-  {
-    const Vec2 center(imageIn.Width() * 0.5, imageIn.Height() * 0.5);
-    Vec2 ppCorrection(0.0, 0.0);
 
-    if(correctPrincipalPoint)
+    /// Undistort an image according a given camera and its distortion model
+    template <typename T>
+    void UndistortImage(
+        const image::Image<T>& imageIn,
+        const camera::IntrinsicBase* intrinsicPtr,
+        image::Image<T>& image_ud,
+        T fillcolor,
+        bool correctPrincipalPoint = false,
+        const oiio::ROI& roi = oiio::ROI())
     {
-      if(camera::isPinhole(intrinsicPtr->getType()))
-      {
-        const camera::Pinhole* pinholePtr = dynamic_cast<const camera::Pinhole*>(intrinsicPtr);
-        ppCorrection = pinholePtr->getPrincipalPoint() - center;
-      }
-    }
-    
-    int widthRoi = imageIn.Width();
-    int heightRoi = imageIn.Height();
-    int xOffset = 0;
-    int yOffset = 0;
-    if(roi.defined())
-    {
-        widthRoi = roi.width();
-        heightRoi = roi.height();
-        xOffset = roi.xbegin;
-        yOffset = roi.ybegin;
-    }
-
-    image_ud.resize(widthRoi, heightRoi, true, fillcolor);
-    const image::Sampler2d<image::SamplerLinear> sampler;
-    
-    std::shared_ptr<camera::IntrinsicBase> corrected(intrinsicPtr->clone());
-
-    std::shared_ptr<camera::IntrinsicsScaleOffsetDisto> camdist = std::dynamic_pointer_cast<camera::IntrinsicsScaleOffsetDisto>(corrected);
-    if (camdist)
-    {
-      std::vector<double> tmp = camdist->getDistortionParams();
-      for (double & v : tmp) v = 0;
-      camdist->setDistortionParams(tmp);
-    }
-
-
-    if (correctPrincipalPoint)
-    {
-      std::shared_ptr<camera::IntrinsicsScaleOffset> camso = std::dynamic_pointer_cast<camera::IntrinsicsScaleOffset>(corrected);
-      if (camso)
-      {
-        camso->setOffset(0.0, 0.0);
-      }
-    }
-    
-
-    #pragma omp parallel for
-    for (int y = 0; y < heightRoi; ++y)
-    {
-        for (int x = 0; x < widthRoi; ++x)
+        if (!intrinsicPtr->hasDistortion()) // no distortion, perform a direct copy
         {
-            const Vec2 undisto_pix(x + xOffset, y + yOffset);
-            // compute coordinates with distortion
-            const Vec2 disto_pix = intrinsicPtr->get_d_pixel(undisto_pix + ppCorrection);
+            image_ud = imageIn;
+        }
+        else // There is distortion
+        {
+            const Vec2 center(imageIn.Width() * 0.5, imageIn.Height() * 0.5);
+            Vec2 ppCorrection(0.0, 0.0);
 
-            // pick pixel if it is in the image domain
-            if (imageIn.Contains(disto_pix(1), disto_pix(0)))
+            if (correctPrincipalPoint)
             {
-                image_ud(y, x) = sampler(imageIn, disto_pix(1), disto_pix(0));
+                if (camera::isPinhole(intrinsicPtr->getType()))
+                {
+                    const camera::Pinhole* pinholePtr = dynamic_cast<const camera::Pinhole*>(intrinsicPtr);
+                    ppCorrection = pinholePtr->getPrincipalPoint() - center;
+                }
+            }
+
+            int widthRoi = imageIn.Width();
+            int heightRoi = imageIn.Height();
+            int xOffset = 0;
+            int yOffset = 0;
+            if (roi.defined())
+            {
+                widthRoi = roi.width();
+                heightRoi = roi.height();
+                xOffset = roi.xbegin;
+                yOffset = roi.ybegin;
+            }
+
+            image_ud.resize(widthRoi, heightRoi, true, fillcolor);
+            const image::Sampler2d<image::SamplerLinear> sampler;
+
+
+#pragma omp parallel for
+            for (int y = 0; y < heightRoi; ++y)
+            {
+                for (int x = 0; x < widthRoi; ++x)
+                {
+                    const Vec2 undisto_pix(x + xOffset, y + yOffset);
+                    // compute coordinates with distortion
+                    const Vec2 disto_pix = intrinsicPtr->get_d_pixel(undisto_pix + ppCorrection);
+
+                    // pick pixel if it is in the image domain
+                    if (imageIn.Contains(disto_pix(1), disto_pix(0)))
+                    {
+                        image_ud(y, x) = sampler(imageIn, disto_pix(1), disto_pix(0));
+                    }
+                }
             }
         }
     }
-  }
-}
-
 
 
 } // namespace camera
