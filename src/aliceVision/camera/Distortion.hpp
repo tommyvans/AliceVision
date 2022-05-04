@@ -67,10 +67,16 @@ public:
         return Eigen::MatrixXd(0, 0);
     }
 
+    virtual void updateLimitRadius()
+    {
+        _limit = std::numeric_limits<double>::max();
+    }
+
     virtual ~Distortion() = default;
 
 protected:
     std::vector<double> _distortionParams{};
+    double _limit;
 };
 
 } // namespace camera

@@ -8,6 +8,7 @@
 #pragma once
 
 #include <aliceVision/camera/Distortion.hpp>
+#include <unsupported/Eigen/Polynomials>
 
 namespace aliceVision {
 namespace camera {
@@ -406,6 +407,10 @@ public:
     const double k3 = _distortionParams[2];
 
     const double r = sqrt(p(0)*p(0) + p(1)*p(1));
+    if (r > _limit)
+    {
+        return p * std::numeric_limits<double>::max();
+    }
     
     const double r2 = r * r;
     const double r4 = r2 * r2;
@@ -583,6 +588,46 @@ public:
     const double r_coeff = (1.0 + k1*r2 + k2*r4 + k3*r6) / (1.0 + k1 + k2 + k3);
 
     return r2 * Square(r_coeff);
+  }
+
+  virtual void updateLimitRadius()
+  {
+      const double k1 = _distortionParams[0];
+      const double k2 = _distortionParams[1];
+      const double k3 = _distortionParams[2];
+
+      double denom = 1.0 + k1 + k2 + k3;
+      double p0 = 1.0;
+      double p2 = 3.0 * k1;
+      double p4 = 5.0 * k2;
+      double p6 = 7.0 * k3;
+
+      Eigen::VectorXd coeff(7);
+
+      coeff[0] = p0;
+      coeff[1] = 0;
+      coeff[2] = p2;
+      coeff[3] = 0;
+      coeff[4] = p4;
+      coeff[5] = 0;
+      coeff[6] = p6;
+
+      Eigen::PolynomialSolver<double, Eigen::Dynamic> solver;
+      solver.compute(coeff);
+
+      std::vector<double> realRoots;
+      solver.realRoots(realRoots);
+      
+      _limit = std::numeric_limits<double>::max();
+      std::sort(realRoots.begin(), realRoots.end());
+      for (int i = 0; i < realRoots.size(); i++)
+      {
+          if (realRoots[i] > 0.0)
+          {
+              _limit = realRoots[i];
+              break;
+          }
+      }
   }
 
   ~DistortionRadialK3PT() override = default;

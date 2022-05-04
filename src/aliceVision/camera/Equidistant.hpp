@@ -429,8 +429,9 @@ public:
     const double fmm = _scale(0) * rscale;
     const double fov = rsensor / fmm;
 
-    double angle = std::acos(ray.normalized().dot(Eigen::Vector3d::UnitZ()));
-    if(std::abs(angle) > 1.2 * (0.5 * fov))
+    const Vec3 X = ray.normalized();
+    const double angle_Z = std::atan2(sqrt(X(0) * X(0) + X(1) * X(1)), X(2));
+    if(std::abs(angle_Z) > _maxAngle)
       return false;
 
     const Vec2 proj = project(geometry::Pose3(), ray.homogeneous(), true);
@@ -446,6 +447,7 @@ public:
   void setCircleRadius(double radius)
   {
     _circleRadius = radius;
+    updateMaxAngle();
   }
 
   double getCircleCenterX() const
@@ -456,6 +458,7 @@ public:
   void setCircleCenterX(double x)
   {
     _circleCenter(0) = x;
+    updateMaxAngle();
   }
 
   double getCircleCenterY() const
@@ -466,11 +469,47 @@ public:
   void setCircleCenterY(double y)
   {
     _circleCenter(1) = y;
+    updateMaxAngle();
+  }
+
+  void updateMaxAngle()
+  {
+      double maxDist = (_circleCenter - getPrincipalPoint()).norm() + _circleRadius;
+
+      const Vec2 pt(maxDist, 0);
+      const Vec2 bearingVector = removeDistortion(ima2cam(getPrincipalPoint() + pt));
+
+      const double rsensor = std::min(sensorWidth(), sensorHeight());
+      const double rscale = sensorWidth() / std::max(w(), h());
+      const double fmm = _scale(0) * rscale;
+      const double fov = rsensor / fmm;
+
+      const double angle_Z = bearingVector.norm() * 0.5 * fov;
+      _maxAngle = angle_Z;
+  }
+
+  // Data wrapper for non linear optimization (update from data)
+  virtual bool updateFromParams(const std::vector<double>& params)
+  {
+      if (!IntrinsicsScaleOffsetDisto::updateFromParams(params))
+      {
+          return false;
+      }
+
+      updateMaxAngle();
+
+      if (hasDistortion())
+      {
+          getDistortion()->updateLimitRadius();
+      }
+
+      return true;
   }
 
 protected:
   double _circleRadius{0.0};
   Vec2 _circleCenter{0.0, 0.0};
+  double _maxAngle{ 0.0 };
 };
 
 } // namespace camera

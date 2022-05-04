@@ -133,7 +133,7 @@ public:
   }
 
   // Data wrapper for non linear optimization (update from data)
-  bool updateFromParams(const std::vector<double>& params) override
+  virtual bool updateFromParams(const std::vector<double>& params)
   {
     if (_pDistortion == nullptr)
     {
