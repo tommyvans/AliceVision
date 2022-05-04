@@ -231,6 +231,16 @@ int aliceVision_main(int argc, char** argv)
 		ALICEVISION_LOG_DEBUG("Range to compute: rangeStart=" << rangeStart << ", rangeSize=" << rangeSize);
 
 
+		for (auto& it : sfmData.getIntrinsics())
+		{
+			std::shared_ptr<camera::IntrinsicsScaleOffsetDisto> isod = std::dynamic_pointer_cast<camera::IntrinsicsScaleOffsetDisto>(it.second);
+			if (isod)
+			{
+				isod->getDistortion()->setIgnoreLimits(false);
+			}
+		}
+
+
 		// If panorama width is undefined, estimate it
 		if(panoramaSize.first <= 0)
 		{
