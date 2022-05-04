@@ -72,11 +72,17 @@ public:
         _limit = std::numeric_limits<double>::max();
     }
 
+    void setIgnoreLimits(bool ignore)
+    {
+        _ignoreLimits = ignore;
+    }
+
     virtual ~Distortion() = default;
 
 protected:
     std::vector<double> _distortionParams{};
-    double _limit;
+    double _limit = std::numeric_limits<double>::max();
+    bool _ignoreLimits = true;
 };
 
 } // namespace camera

@@ -407,7 +407,7 @@ public:
     const double k3 = _distortionParams[2];
 
     const double r = sqrt(p(0)*p(0) + p(1)*p(1));
-    if (r > _limit)
+    if (r > _limit && !_ignoreLimits)
     {
         return p * std::numeric_limits<double>::max();
     }
