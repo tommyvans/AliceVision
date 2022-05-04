@@ -9,6 +9,7 @@
 #include <aliceVision/sfmDataIO/sfmDataIO.hpp>
 #include <aliceVision/sfm/pipeline/regionsIO.hpp>
 #include <aliceVision/feature/imageDescriberCommon.hpp>
+#include <aliceVision/sfm/pipeline/rotation/ReconstructionEngine_rotation.hpp>
 #include <aliceVision/sfm/pipeline/panorama/ReconstructionEngine_panorama.hpp>
 #include <aliceVision/sfm/utils/alignment.hpp>
 #include <aliceVision/system/Timer.hpp>
@@ -103,6 +104,7 @@ int aliceVision_main(int argc, char **argv)
   int randomSeed = std::mt19937::default_seed;
 
   sfm::ReconstructionEngine_panorama::Params params;
+  sfm::ReconstructionEngine_rotation::Params params_rotation;
 
   po::options_description allParams(
     "Perform estimation of cameras orientation around a nodal point for 360° panorama.\n"
@@ -123,14 +125,14 @@ int aliceVision_main(int argc, char **argv)
   optionalParams.add_options()
     ("describerTypes,d", po::value<std::string>(&describerTypesName)->default_value(describerTypesName),
       feature::EImageDescriberType_informations().c_str())
-    ("rotationAveraging", po::value<sfm::ERotationAveragingMethod>(&params.eRotationAveragingMethod)->default_value(params.eRotationAveragingMethod),
+    ("rotationAveraging", po::value<sfm::ERotationAveragingMethod>(&params_rotation.eRotationAveragingMethod)->default_value(params_rotation.eRotationAveragingMethod),
       "* 1: L1 minimization\n"
       "* 2: L2 minimization")
-    ("relativeRotation", po::value<sfm::ERelativeRotationMethod>(&params.eRelativeRotationMethod)->default_value(params.eRelativeRotationMethod),
+    ("relativeRotation", po::value<sfm::ERelativeRotationMethod>(&params_rotation.eRelativeRotationMethod)->default_value(params_rotation.eRelativeRotationMethod),
       "* from essential matrix"
       "* from rotation matrix"
       "* from homography matrix")
-    ("rotationAveragingWeighting", po::value<bool>(&params.rotationAveragingWeighting)->default_value(params.rotationAveragingWeighting),
+    ("rotationAveragingWeighting", po::value<bool>(&params_rotation.rotationAveragingWeighting)->default_value(params_rotation.rotationAveragingWeighting),
       "Use weighting of image links during rotation averaging.")
     ("offsetLongitude", po::value<float>(&offsetLongitude)->default_value(offsetLongitude),
       "offset to camera longitude")
@@ -142,9 +144,9 @@ int aliceVision_main(int argc, char **argv)
       "Refine cameras with a Bundle Adjustment")
     ("lockAllIntrinsics", po::value<bool>(&params.lockAllIntrinsics)->default_value(params.lockAllIntrinsics),
       "Force lock of all camera intrinsic parameters, so they will not be refined during Bundle Adjustment.")
-    ("maxAngleToPrior", po::value<double>(&params.maxAngleToPrior)->default_value(params.maxAngleToPrior),
+    ("maxAngleToPrior", po::value<double>(&params_rotation.maxAngleToPrior)->default_value(params_rotation.maxAngleToPrior),
       "Maximal angle allowed regarding the input prior.")
-    ("maxAngularError", po::value<double>(&params.maxAngularError)->default_value(params.maxAngularError),
+    ("maxAngularError", po::value<double>(&params_rotation.maxAngularError)->default_value(params_rotation.maxAngularError),
       "Maximal angular error in global rotation averaging.")
     ("intermediateRefineWithFocal", po::value<bool>(&params.intermediateRefineWithFocal)->default_value(params.intermediateRefineWithFocal),
       "Add an intermediate refine with rotation+focal in the different BA steps.")
@@ -194,15 +196,15 @@ int aliceVision_main(int argc, char **argv)
   // set verbose level
   system::Logger::get()->setLogLevel(verboseLevel);
 
-  if (params.eRotationAveragingMethod < sfm::ROTATION_AVERAGING_L1 ||
-      params.eRotationAveragingMethod > sfm::ROTATION_AVERAGING_L2 )
+  if (params_rotation.eRotationAveragingMethod < sfm::ROTATION_AVERAGING_L1 ||
+      params_rotation.eRotationAveragingMethod > sfm::ROTATION_AVERAGING_L2 )
   {
     ALICEVISION_LOG_ERROR("Rotation averaging method is invalid");
     return EXIT_FAILURE;
   }
 
-  if (params.eRelativeRotationMethod < sfm::RELATIVE_ROTATION_FROM_E ||
-      params.eRelativeRotationMethod > sfm::RELATIVE_ROTATION_FROM_H )
+  if (params_rotation.eRelativeRotationMethod < sfm::RELATIVE_ROTATION_FROM_E ||
+      params_rotation.eRelativeRotationMethod > sfm::RELATIVE_ROTATION_FROM_H )
   {
     ALICEVISION_LOG_ERROR("Relative rotation method is invalid");
     return EXIT_FAILURE;
@@ -267,46 +269,57 @@ int aliceVision_main(int argc, char **argv)
 
   // Panorama reconstruction process
   aliceVision::system::Timer timer;
-  sfm::ReconstructionEngine_panorama sfmEngine(
-    inputSfmData,
-    params,
-    outDirectory,
-    (fs::path(outDirectory) / "sfm_log.html").string());
 
-  sfmEngine.initRandomSeed(randomSeed);
+  sfm::ReconstructionEngine_rotation sfmEngineRotation(inputSfmData, params_rotation, outDirectory);
+  sfmEngineRotation.initRandomSeed(randomSeed);
 
   // configure the featuresPerView & the matches_provider
-  sfmEngine.SetFeaturesProvider(&featuresPerView);
-  sfmEngine.SetMatchesProvider(&pairwiseMatches);
+  sfmEngineRotation.SetFeaturesProvider(&featuresPerView);
+  sfmEngineRotation.SetMatchesProvider(&pairwiseMatches);
 
-  if(filterMatches)
+  if (filterMatches)
   {
-      sfmEngine.filterMatches();
+      sfmEngineRotation.filterMatches();
   }
 
-  if(!sfmEngine.process())
+  if (!sfmEngineRotation.process())
+  {
+      ALICEVISION_LOG_ERROR("sfmEngineRotation Failed");
+      return EXIT_FAILURE;
+  }
+
+  sfmData::SfMData& intermediateSfmData = sfmEngineRotation.getSfMData();
+  sfmDataIO::Save(intermediateSfmData, "c:/prog/toto.sfm", sfmDataIO::ESfMData::ALL);
+  
+  sfm::ReconstructionEngine_panorama sfmEnginePanorama(intermediateSfmData, params, outDirectory, (fs::path(outDirectory) / "sfm_log.html").string());
+  sfmEnginePanorama.initRandomSeed(randomSeed);
+  // configure the featuresPerView & the matches_provider
+  sfmEnginePanorama.SetFeaturesProvider(&featuresPerView);
+  sfmEnginePanorama.SetMatchesProvider(&pairwiseMatches);
+
+  if (!sfmEnginePanorama.process())
   {
     return EXIT_FAILURE;
   }
 
   // set featuresFolders and matchesFolders relative paths
   {
-    sfmEngine.getSfMData().addFeaturesFolders(featuresFolders);
-    sfmEngine.getSfMData().addMatchesFolders(matchesFolders);
-    sfmEngine.getSfMData().setAbsolutePath(outputSfMDataFilepath);
+    sfmEnginePanorama.getSfMData().addFeaturesFolders(featuresFolders);
+    sfmEnginePanorama.getSfMData().addMatchesFolders(matchesFolders);
+    sfmEnginePanorama.getSfMData().setAbsolutePath(outputSfMDataFilepath);
   }
 
   if(refine)
   {
-    sfmDataIO::Save(sfmEngine.getSfMData(), (fs::path(outDirectory) / "BA_before.abc").string(), sfmDataIO::ESfMData::ALL);
-    if (!sfmEngine.Adjust())
+    sfmDataIO::Save(sfmEnginePanorama.getSfMData(), (fs::path(outDirectory) / "BA_before.abc").string(), sfmDataIO::ESfMData::ALL);
+    if (!sfmEnginePanorama.Adjust())
     {
       return EXIT_FAILURE;
     }
-    sfmDataIO::Save(sfmEngine.getSfMData(), (fs::path(outDirectory) / "BA_after.abc").string(), sfmDataIO::ESfMData::ALL);
+    sfmDataIO::Save(sfmEnginePanorama.getSfMData(), (fs::path(outDirectory) / "BA_after.abc").string(), sfmDataIO::ESfMData::ALL);
   }
 
-  sfmData::SfMData& outSfmData = sfmEngine.getSfMData();
+  sfmData::SfMData& outSfmData = sfmEnginePanorama.getSfMData();
 
   
 
@@ -414,8 +427,8 @@ int aliceVision_main(int argc, char **argv)
     pose.second.setTransform(p);
   }
 
-  sfmEngine.buildLandmarks();
-  sfmEngine.colorize();
+  sfmEnginePanorama.buildLandmarks();
+  sfmEnginePanorama.colorize();
 
   {
     std::set<IndexT> viewsWithObservations;
