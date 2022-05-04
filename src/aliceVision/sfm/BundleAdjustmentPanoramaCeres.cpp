@@ -22,6 +22,158 @@ namespace fs = boost::filesystem;
 
 namespace aliceVision {
 
+
+class IntrinsicsParameterization : public ceres::LocalParameterization {
+public:
+    explicit IntrinsicsParameterization(size_t parametersSize, double focalRatio, bool lockFocal, bool lockFocalRatio, bool lockCenter, bool lockDistortion)
+        : _globalSize(parametersSize),
+        _focalRatio(focalRatio),
+        _lockFocal(lockFocal),
+        _lockFocalRatio(lockFocalRatio),
+        _lockCenter(lockCenter),
+        _lockDistortion(lockDistortion)
+    {
+        _distortionSize = _globalSize - 4;
+        _localSize = 0;
+
+        if (!_lockFocal)
+        {
+            if (_lockFocalRatio)
+            {
+                _localSize += 1;
+            }
+            else
+            {
+                _localSize += 2;
+            }
+        }
+
+        if (!_lockCenter)
+        {
+            _localSize += 2;
+        }
+
+        if (!_lockDistortion)
+        {
+            _localSize += _distortionSize;
+        }
+    }
+
+    virtual ~IntrinsicsParameterization() = default;
+
+
+    bool Plus(const double* x, const double* delta, double* x_plus_delta) const override
+    {
+        for (int i = 0; i < _globalSize; i++)
+        {
+            x_plus_delta[i] = x[i];
+        }
+
+        size_t posDelta = 0;
+        if (!_lockFocal)
+        {
+            if (_lockFocalRatio)
+            {
+                x_plus_delta[0] = x[0] + delta[posDelta];
+                x_plus_delta[1] = x[1] + _focalRatio * delta[posDelta];
+                ++posDelta;
+            }
+            else
+            {
+                x_plus_delta[0] = x[0] + delta[posDelta];
+                ++posDelta;
+                x_plus_delta[1] = x[1] + delta[posDelta];
+                ++posDelta;
+            }
+        }
+
+        if (!_lockCenter)
+        {
+            x_plus_delta[2] = x[2] + delta[posDelta];
+            ++posDelta;
+
+            x_plus_delta[3] = x[3] + delta[posDelta];
+            ++posDelta;
+        }
+
+        if (!_lockDistortion)
+        {
+            for (int i = 0; i < _distortionSize; i++)
+            {
+                x_plus_delta[4 + i] = x[4 + i] + delta[posDelta];
+                ++posDelta;
+            }
+        }
+
+        return true;
+    }
+
+    bool ComputeJacobian(const double* x, double* jacobian) const override
+    {
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> J(jacobian, GlobalSize(), LocalSize());
+
+        J.fill(0);
+
+        size_t posDelta = 0;
+        if (!_lockFocal)
+        {
+            if (_lockFocalRatio)
+            {
+                J(0, posDelta) = 1.0;
+                J(1, posDelta) = _focalRatio;
+                ++posDelta;
+            }
+            else
+            {
+                J(0, posDelta) = 1.0;
+                ++posDelta;
+                J(1, posDelta) = 1.0;
+                ++posDelta;
+            }
+        }
+
+        if (!_lockCenter)
+        {
+            J(2, posDelta) = 1.0;
+            ++posDelta;
+
+            J(3, posDelta) = 1.0;
+            ++posDelta;
+        }
+
+        if (!_lockDistortion)
+        {
+            for (int i = 0; i < _distortionSize; i++)
+            {
+                J(4 + i, posDelta) = 1.0;
+                ++posDelta;
+            }
+        }
+
+        return true;
+    }
+
+    int GlobalSize() const override
+    {
+        return _globalSize;
+    }
+
+    int LocalSize() const override
+    {
+        return _localSize;
+    }
+
+private:
+    size_t _distortionSize;
+    size_t _globalSize;
+    size_t _localSize;
+    double _focalRatio;
+    bool _lockFocal;
+    bool _lockFocalRatio;
+    bool _lockCenter;
+    bool _lockDistortion;
+};
+
 class CostRotationPrior : public ceres::SizedCostFunction<3, 9, 9> {
 public:
   explicit CostRotationPrior(const Eigen::Matrix3d & two_R_one) : _two_R_one(two_R_one) {
@@ -447,120 +599,136 @@ void BundleAdjustmentPanoramaCeres::addExtrinsicsToProblem(const sfmData::SfMDat
 
 void BundleAdjustmentPanoramaCeres::addIntrinsicsToProblem(const sfmData::SfMData& sfmData, BundleAdjustment::ERefineOptions refineOptions, ceres::Problem& problem)
 {
-  const std::size_t minImagesForOpticalCenter = 3;
-  
-  const bool refineIntrinsicsOpticalCenter = (refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_ALWAYS) || (refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_IF_ENOUGH_DATA);
-  const bool refineIntrinsicsFocalLength = refineOptions & REFINE_INTRINSICS_FOCAL;
-  const bool refineIntrinsicsDistortion = refineOptions & REFINE_INTRINSICS_DISTORTION;
-  const bool refineIntrinsics = refineIntrinsicsDistortion || refineIntrinsicsFocalLength || refineIntrinsicsOpticalCenter;
+    const bool refineIntrinsicsOpticalCenter = (refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_ALWAYS) || (refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_IF_ENOUGH_DATA);
+    const bool refineIntrinsicsFocalLength = refineOptions & REFINE_INTRINSICS_FOCAL;
+    const bool refineIntrinsicsDistortion = refineOptions & REFINE_INTRINSICS_DISTORTION;
+    const bool refineIntrinsics = refineIntrinsicsDistortion || refineIntrinsicsFocalLength || refineIntrinsicsOpticalCenter;
+    const bool fixFocalRatio = true;
 
-  std::map<IndexT, std::size_t> intrinsicsUsage;
+    std::map<IndexT, std::size_t> intrinsicsUsage;
 
-  // count the number of reconstructed views per intrinsic
-  for(const auto& viewPair: sfmData.getViews())
-  {
-    const sfmData::View& view = *(viewPair.second);
-
-    if(intrinsicsUsage.find(view.getIntrinsicId()) == intrinsicsUsage.end()) {
-      intrinsicsUsage[view.getIntrinsicId()] = 0;
-    }
-
-    if(sfmData.isPoseAndIntrinsicDefined(&view)) {
-      ++intrinsicsUsage.at(view.getIntrinsicId());
-    }
-  }
-
-  for(const auto& intrinsicPair: sfmData.getIntrinsics())
-  {
-    const IndexT intrinsicId = intrinsicPair.first;
-    const auto& intrinsicPtr = intrinsicPair.second;
-    const auto usageIt = intrinsicsUsage.find(intrinsicId);
-    if(usageIt == intrinsicsUsage.end()) {
-      // if the intrinsic is never referenced by any view, skip it
-      continue;
-    }
-    const std::size_t usageCount = usageIt->second;
-
-    // do not refine an intrinsic does not used by any reconstructed view
-    if(usageCount == UndefinedIndexT || getIntrinsicState(intrinsicId) == EParameterState::IGNORED)
+    // count the number of reconstructed views per intrinsic
+    for (const auto& viewPair : sfmData.getViews())
     {
-      _statistics.addState(EParameter::INTRINSIC, EParameterState::IGNORED);
-      continue;
+        const sfmData::View& view = *(viewPair.second);
+
+        if (intrinsicsUsage.find(view.getIntrinsicId()) == intrinsicsUsage.end())
+            intrinsicsUsage[view.getIntrinsicId()] = 0;
+
+        if (sfmData.isPoseAndIntrinsicDefined(&view))
+            ++intrinsicsUsage.at(view.getIntrinsicId());
     }
 
-    assert(isValid(intrinsicPtr->getType()));
-
-    std::vector<double>& intrinsicBlock = _intrinsicsBlocks[intrinsicId];
-    intrinsicBlock = intrinsicPtr->getParams();
-
-    double* intrinsicBlockPtr = intrinsicBlock.data();
-    problem.AddParameterBlock(intrinsicBlockPtr, intrinsicBlock.size());
-
-    // keep the camera intrinsic constant
-    if(intrinsicPtr->isLocked() || !refineIntrinsics || getIntrinsicState(intrinsicId) == EParameterState::CONSTANT)
+    for (const auto& intrinsicPair : sfmData.getIntrinsics())
     {
-      // set the whole parameter block as constant.
-      _statistics.addState(EParameter::INTRINSIC, EParameterState::CONSTANT);
-      problem.SetParameterBlockConstant(intrinsicBlockPtr);
-      continue;
+        const IndexT intrinsicId = intrinsicPair.first;
+        const auto& intrinsicPtr = intrinsicPair.second;
+        const auto usageIt = intrinsicsUsage.find(intrinsicId);
+        if (usageIt == intrinsicsUsage.end())
+            // if the intrinsic is never referenced by any view, skip it
+            continue;
+        const std::size_t usageCount = usageIt->second;
+
+        // do not refine an intrinsic does not used by any reconstructed view
+        if (usageCount <= 0 || getIntrinsicState(intrinsicId) == EParameterState::IGNORED)
+        {
+            _statistics.addState(EParameter::INTRINSIC, EParameterState::IGNORED);
+            continue;
+        }
+
+        assert(isValid(intrinsicPtr->getType()));
+
+        std::vector<double>& intrinsicBlock = _intrinsicsBlocks[intrinsicId];
+        intrinsicBlock = intrinsicPtr->getParams();
+
+        double* intrinsicBlockPtr = intrinsicBlock.data();
+        problem.AddParameterBlock(intrinsicBlockPtr, intrinsicBlock.size());
+
+        // keep the camera intrinsic constant
+        if (intrinsicPtr->isLocked() || !refineIntrinsics || getIntrinsicState(intrinsicId) == EParameterState::CONSTANT)
+        {
+            // set the whole parameter block as constant.
+            _statistics.addState(EParameter::INTRINSIC, EParameterState::CONSTANT);
+            problem.SetParameterBlockConstant(intrinsicBlockPtr);
+            continue;
+        }
+
+        // constant parameters
+        bool lockCenter = false;
+        bool lockFocal = false;
+        bool lockRatio = true;
+        bool lockDistortion = false;
+        double focalRatio = 1.0;
+
+        // refine the focal length
+        if (refineIntrinsicsFocalLength)
+        {
+            std::shared_ptr<camera::IntrinsicsScaleOffset> intrinsicScaleOffset = std::dynamic_pointer_cast<camera::IntrinsicsScaleOffset>(intrinsicPtr);
+            if (intrinsicScaleOffset->getInitialScale().x() > 0 && intrinsicScaleOffset->getInitialScale().y() > 0)
+            {
+                // if we have an initial guess, we only authorize a margin around this value.
+                assert(intrinsicBlock.size() >= 1);
+                const unsigned int maxFocalError = 0.2 * std::max(intrinsicPtr->w(), intrinsicPtr->h()); // TODO : check if rounding is needed
+                problem.SetParameterLowerBound(intrinsicBlockPtr, 0, static_cast<double>(intrinsicScaleOffset->getInitialScale().x() - maxFocalError));
+                problem.SetParameterUpperBound(intrinsicBlockPtr, 0, static_cast<double>(intrinsicScaleOffset->getInitialScale().x() + maxFocalError));
+                problem.SetParameterLowerBound(intrinsicBlockPtr, 1, static_cast<double>(intrinsicScaleOffset->getInitialScale().y() - maxFocalError));
+                problem.SetParameterUpperBound(intrinsicBlockPtr, 1, static_cast<double>(intrinsicScaleOffset->getInitialScale().y() + maxFocalError));
+            }
+            else // no initial guess
+            {
+                // we don't have an initial guess, but we assume that we use
+                // a converging lens, so the focal length should be positive.
+                problem.SetParameterLowerBound(intrinsicBlockPtr, 0, 0.0);
+                problem.SetParameterLowerBound(intrinsicBlockPtr, 1, 0.0);
+            }
+
+            focalRatio = intrinsicBlockPtr[1] / intrinsicBlockPtr[0];
+
+            std::shared_ptr<camera::IntrinsicsScaleOffset> castedcam_iso = std::dynamic_pointer_cast<camera::IntrinsicsScaleOffset>(intrinsicPtr);
+            if (castedcam_iso)
+            {
+                lockRatio = castedcam_iso->isRatioLocked();
+            }
+        }
+        else
+        {
+            // set focal length as constant
+            lockFocal = true;
+        }
+
+        const std::size_t minNbImagesToRefineOpticalCenter = 3;
+        const bool optional_center = ((refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_IF_ENOUGH_DATA) && (usageCount > minNbImagesToRefineOpticalCenter));
+        if ((refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_ALWAYS) || optional_center)
+        {
+            // refine optical center within 10% of the image size.
+            assert(intrinsicBlock.size() >= 4);
+
+            const double opticalCenterMinPercent = -0.05;
+            const double opticalCenterMaxPercent = 0.05;
+
+            // add bounds to the principal point
+            problem.SetParameterLowerBound(intrinsicBlockPtr, 2, opticalCenterMinPercent * intrinsicPtr->w());
+            problem.SetParameterUpperBound(intrinsicBlockPtr, 2, opticalCenterMaxPercent * intrinsicPtr->w());
+            problem.SetParameterLowerBound(intrinsicBlockPtr, 3, opticalCenterMinPercent * intrinsicPtr->h());
+            problem.SetParameterUpperBound(intrinsicBlockPtr, 3, opticalCenterMaxPercent * intrinsicPtr->h());
+        }
+        else
+        {
+            // don't refine the optical center
+            lockCenter = true;
+        }
+
+        // lens distortion
+        if (!refineIntrinsicsDistortion)
+        {
+            lockDistortion = true;
+        }
+
+        IntrinsicsParameterization* subsetParameterization = new IntrinsicsParameterization(intrinsicBlock.size(), focalRatio, lockFocal, lockRatio, lockCenter, lockDistortion);
+        problem.SetParameterization(intrinsicBlockPtr, subsetParameterization);
+
+        _statistics.addState(EParameter::INTRINSIC, EParameterState::REFINED);
     }
-
-    // constant parameters
-    std::vector<int> constantIntrinisc;
-
-    // refine the focal length
-    if(refineIntrinsicsFocalLength)
-    {
-      // we don't have an initial guess, but we assume that we use
-      // a converging lens, so the focal length should be positive.
-      problem.SetParameterLowerBound(intrinsicBlockPtr, 0, 0.0);
-      problem.SetParameterLowerBound(intrinsicBlockPtr, 1, 0.0);
-    }
-    else
-    {
-      // set focal length as constant
-      constantIntrinisc.push_back(0);
-      constantIntrinisc.push_back(1);
-    }
-
-    // optical center
-    bool optional_center = ((refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_IF_ENOUGH_DATA) && (usageCount > minImagesForOpticalCenter));
-    if((refineOptions & REFINE_INTRINSICS_OPTICALOFFSET_ALWAYS) || optional_center)
-    {
-      // refine optical center within 10% of the image size.
-      assert(intrinsicBlock.size() >= 4);
-
-      const double opticalCenterMinPercent = -0.05;
-      const double opticalCenterMaxPercent =  0.05;
-
-      // add bounds to the principal point
-      problem.SetParameterLowerBound(intrinsicBlockPtr, 2, opticalCenterMinPercent * intrinsicPtr->w());
-      problem.SetParameterUpperBound(intrinsicBlockPtr, 2, opticalCenterMaxPercent * intrinsicPtr->w());
-      problem.SetParameterLowerBound(intrinsicBlockPtr, 3, opticalCenterMinPercent * intrinsicPtr->h());
-      problem.SetParameterUpperBound(intrinsicBlockPtr, 3, opticalCenterMaxPercent * intrinsicPtr->h());
-    }
-    else
-    {
-      // don't refine the optical center
-      constantIntrinisc.push_back(2);
-      constantIntrinisc.push_back(3);
-    }
-
-    // lens distortion
-    if(!refineIntrinsicsDistortion) {
-      for(std::size_t i = 4; i < intrinsicBlock.size(); ++i) {
-        constantIntrinisc.push_back(i);
-      }
-    }
-
-    if(!constantIntrinisc.empty())
-    {
-      ceres::SubsetParameterization* subsetParameterization = new ceres::SubsetParameterization(intrinsicBlock.size(), constantIntrinisc);
-      problem.SetParameterization(intrinsicBlockPtr, subsetParameterization);
-    }
-
-    _statistics.addState(EParameter::INTRINSIC, EParameterState::REFINED);
-  }
 }
 
 
