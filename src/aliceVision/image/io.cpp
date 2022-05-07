@@ -103,7 +103,13 @@ std::string getColorConfigFilePath()
     configOCIOFilePath.append("/share/aliceVision/config.ocio");
 
     if (!fs::exists(configOCIOFilePath))
+    {
         ALICEVISION_THROW_ERROR("OCIO configuration file: '" << configOCIOFilePath << "' does not exist.");
+    }
+    else
+    {
+        ALICEVISION_LOG_TRACE("OCIO configuration file: '" << configOCIOFilePath << "' found.");
+    }
 
     return configOCIOFilePath;
 }
@@ -406,14 +412,16 @@ void readImage(const std::string& path,
   if(imageReadOptions.workingColorSpace == EImageColorSpace::AUTO)
     throw std::runtime_error("You must specify a requested color space for image file '" + path + "'.");
 
-  std::string inputColorSpace = EImageColorSpace_enumToString(getImageColorSpace(path));
-
-  if ((imageReadOptions.workingColorSpace != EImageColorSpace::NO_CONVERSION) && (EImageColorSpace_stringToEnum(boost::to_lower_copy(inputColorSpace)) != imageReadOptions.workingColorSpace))
+  if (imageReadOptions.workingColorSpace != EImageColorSpace::NO_CONVERSION)
   {
-      oiio::ColorConfig colorConfig(getColorConfigFilePath());
-      std::string outputColorSpace = (imageReadOptions.workingColorSpace == EImageColorSpace::SRGB_LINEAR) ? "linear" : EImageColorSpace_enumToString(imageReadOptions.workingColorSpace);
-      oiio::ImageBufAlgo::colorconvert(inBuf, inBuf, inputColorSpace, outputColorSpace, true, "", "", &colorConfig);
-      ALICEVISION_LOG_TRACE("Convert image " << path << " from " << inputColorSpace << " to " << outputColorSpace << " colorspace");
+      std::string inputColorSpace = EImageColorSpace_enumToString(getImageColorSpace(path));
+      if (EImageColorSpace_stringToEnum(boost::to_lower_copy(inputColorSpace)) != imageReadOptions.workingColorSpace)
+      {
+          oiio::ColorConfig colorConfig(getColorConfigFilePath());
+          std::string outputColorSpace = (imageReadOptions.workingColorSpace == EImageColorSpace::SRGB_LINEAR) ? "linear" : EImageColorSpace_enumToString(imageReadOptions.workingColorSpace);
+          oiio::ImageBufAlgo::colorconvert(inBuf, inBuf, inputColorSpace, outputColorSpace, true, "", "", &colorConfig);
+          ALICEVISION_LOG_TRACE("Convert image " << path << " from " << inputColorSpace << " to " << outputColorSpace << " colorspace");
+      }
   }
 
   // convert to grayscale if needed
