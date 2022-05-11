@@ -3,7 +3,7 @@ set(sfm_files_headers
   pipeline/global/GlobalSfMRotationAveragingSolver.hpp
   pipeline/global/GlobalSfMTranslationAveragingSolver.hpp
   pipeline/global/MutexSet.hpp
-  pipeline/global/ReconstructionEngine_globalSfM.hpp
+  #pipeline/global/ReconstructionEngine_globalSfM.hpp
   pipeline/global/reindexGlobalSfM.hpp
   pipeline/global/TranslationTripletKernelACRansac.hpp
   pipeline/localization/SfMLocalizer.hpp

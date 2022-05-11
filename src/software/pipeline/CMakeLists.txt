@@ -115,18 +115,18 @@ if(ALICEVISION_BUILD_SFM)
   )
 
   # Global SfM
-  alicevision_add_software(aliceVision_globalSfM
-    SOURCE main_globalSfM.cpp
-    FOLDER ${FOLDER_SOFTWARE_PIPELINE}
-    LINKS aliceVision_system
-          aliceVision_image
-          aliceVision_feature
-          aliceVision_sfm
-          aliceVision_sfmData
-          aliceVision_sfmDataIO
-          Boost::program_options
-          Boost::filesystem
-  )
+  #alicevision_add_software(aliceVision_globalSfM
+  #  SOURCE main_globalSfM.cpp
+  #  FOLDER ${FOLDER_SOFTWARE_PIPELINE}
+  #  LINKS aliceVision_system
+  #        aliceVision_image
+  #        aliceVision_feature
+  #        aliceVision_sfm
+  #        aliceVision_sfmData
+  #        aliceVision_sfmDataIO
+  #        Boost::program_options
+  #        Boost::filesystem
+  #)
 
   # Panorama
   alicevision_add_software(aliceVision_panoramaEstimation
