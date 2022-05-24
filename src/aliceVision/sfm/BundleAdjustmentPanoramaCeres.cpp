@@ -174,55 +174,120 @@ private:
     bool _lockDistortion;
 };
 
-class CostRotationPrior : public ceres::SizedCostFunction<3, 9, 9> {
+class CostRotationPrior : public ceres::CostFunction {
 public:
-  explicit CostRotationPrior(const Eigen::Matrix3d & two_R_one) : _two_R_one(two_R_one) {
+  explicit CostRotationPrior(const Eigen::Matrix3d & two_R_one, bool withRig_one, bool withRig_two, bool withSameRig)
+  : _two_R_one(two_R_one), _withRig_one(withRig_one), _withRig_two(withRig_two), _withSameRig(withSameRig)
+  {
+      
+      set_num_residuals(3);
 
+      mutable_parameter_block_sizes()->push_back(9);
+      mutable_parameter_block_sizes()->push_back(9);
+
+      if (withRig_one)
+      {
+          mutable_parameter_block_sizes()->push_back(9);
+      }
+
+      if (withRig_two && !withSameRig)
+      {
+          mutable_parameter_block_sizes()->push_back(9);
+      }
   }
 
-  bool Evaluate(double const * const * parameters, double * residuals, double ** jacobians) const override {
+    bool Evaluate(double const* const* parameters, double* residuals, double** jacobians) const override {
 
-    const double * parameter_rotation_one = parameters[0];
-    const double * parameter_rotation_two = parameters[1];
+        const double identity[] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+        const double* parameter_rotation_one = parameters[0];
+        const double* parameter_rotation_two = parameters[1];
+        const double* parameter_rotation_rig_one = (_withRig_one) ? parameters[2] : identity;
+        const double* parameter_rotation_rig_two = (_withRig_two ? (_withSameRig?parameters[2]:parameters[3]) : identity);
 
-    const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> oneRo(parameter_rotation_one);
-    const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> twoRo(parameter_rotation_two);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> oneRo(parameter_rotation_one);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> twoRo(parameter_rotation_two);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> coneRone(parameter_rotation_rig_one);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> ctwoRtwo(parameter_rotation_rig_two);
 
-    Eigen::Matrix3d two_R_one_est = twoRo * oneRo.transpose();
-    Eigen::Matrix3d error_R = two_R_one_est * _two_R_one.transpose();
-    Eigen::Vector3d error_r = SO3::logm(error_R);
+        const Eigen::Matrix3d coneRo = coneRone * oneRo;
+        const Eigen::Matrix3d ctwoRo = ctwoRtwo * twoRo;
 
-    residuals[0] = error_r(0);
-    residuals[1] = error_r(1);
-    residuals[2] = error_r(2);
+        Eigen::Matrix3d ctwo_R_cone_est = ctwoRo * coneRo.transpose();
+        Eigen::Matrix3d error_R = ctwo_R_cone_est * _two_R_one.transpose();
+        Eigen::Vector3d error_r = SO3::logm(error_R);
 
-    if (jacobians == nullptr) {
-      return true;
+        residuals[0] = error_r(0);
+        residuals[1] = error_r(1);
+        residuals[2] = error_r(2);
+
+        if (jacobians == nullptr) {
+            return true;
+        }
+
+        if (jacobians[0]) {
+            Eigen::Map<Eigen::Matrix<double, 3, 9, Eigen::RowMajor>> J(jacobians[0]);
+
+            J = SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(ctwo_R_cone_est, _two_R_one.transpose()) * getJacobian_AB_wrt_B<3, 3, 3>(ctwoRo, coneRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_B<3, 3, 3>(coneRone, oneRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), oneRo);
+        }
+
+        if (jacobians[1]) {
+            Eigen::Map<Eigen::Matrix<double, 3, 9, Eigen::RowMajor>> J(jacobians[1]);
+
+            J = SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(ctwo_R_cone_est, _two_R_one.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(ctwoRo, coneRo.transpose()) * getJacobian_AB_wrt_B<3, 3, 3>(ctwoRtwo, twoRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), twoRo);
+        }
+
+        if (_withRig_one)
+        {
+            if (jacobians[2]) {
+                Eigen::Map<Eigen::Matrix<double, 3, 9, Eigen::RowMajor>> J(jacobians[2]);
+
+                J = SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(ctwo_R_cone_est, _two_R_one.transpose()) * getJacobian_AB_wrt_B<3, 3, 3>(ctwoRo, coneRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_A<3, 3, 3>(coneRone, oneRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), coneRone);
+
+                if (_withSameRig)
+                {
+                    J += SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(ctwo_R_cone_est, _two_R_one.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(ctwoRo, coneRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(ctwoRtwo, twoRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), ctwoRtwo);
+                }
+            }
+        }
+
+        if (_withRig_two && !_withSameRig)
+        {
+            if (jacobians[3]) {
+                Eigen::Map<Eigen::Matrix<double, 3, 9, Eigen::RowMajor>> J(jacobians[3]);
+
+                J = SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(ctwo_R_cone_est, _two_R_one.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(ctwoRo, coneRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(ctwoRtwo, twoRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), ctwoRtwo);
+            }
+        }
+
+        return true;
     }
-
-    if (jacobians[0]) {
-      Eigen::Map<Eigen::Matrix<double, 3, 9, Eigen::RowMajor>> J(jacobians[0]);
-
-      J = SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(two_R_one_est, _two_R_one.transpose()) * getJacobian_AB_wrt_B<3, 3, 3>(twoRo, oneRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), oneRo);
-    }
-
-    if (jacobians[1]) {
-      Eigen::Map<Eigen::Matrix<double, 3, 9, Eigen::RowMajor>> J(jacobians[1]);
-
-      J = SO3::dlogmdr(error_R) * getJacobian_AB_wrt_A<3, 3, 3>(two_R_one_est, _two_R_one.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(twoRo, oneRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), twoRo);
-    }
-
-    return true;
-  }
 
 private:
   Eigen::Matrix3d _two_R_one;
+  bool _withRig_one;
+  bool _withRig_two;
+  bool _withSameRig;
 };
 
-class CostEquiDistant : public ceres::SizedCostFunction<2, 9, 9, 7> {
+class CostEquiDistant : public ceres::CostFunction {
 public:
-  CostEquiDistant(Vec2 fi, Vec2 fj, std::shared_ptr<camera::EquiDistant> & intrinsic) : _fi(fi), _fj(fj), _intrinsic(intrinsic) {
+  CostEquiDistant(Vec2 fi, Vec2 fj, std::shared_ptr<camera::EquiDistant> & intrinsic, bool withRig_one, bool withRig_two, bool withSameRig) : _fi(fi), _fj(fj), _intrinsic(intrinsic), _withRig_one(withRig_one), _withRig_two(withRig_two), _withSameRig(withSameRig) {
+      
+      set_num_residuals(2);
 
+      mutable_parameter_block_sizes()->push_back(9);
+      mutable_parameter_block_sizes()->push_back(9);
+      mutable_parameter_block_sizes()->push_back(intrinsic->getParams().size());
+      
+      if (withRig_one)
+      {
+          mutable_parameter_block_sizes()->push_back(9);
+      }
+
+      if (withRig_two && !withSameRig)
+      {
+          mutable_parameter_block_sizes()->push_back(9);
+      }
   }
 
   bool Evaluate(double const * const * parameters, double * residuals, double ** jacobians) const override {
@@ -230,18 +295,27 @@ public:
     Vec2 pt_i = _fi;
     Vec2 pt_j = _fj;
 
+    const double identity[] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
     const double * parameter_rotation_i = parameters[0];
     const double * parameter_rotation_j = parameters[1];
     const double * parameter_intrinsics = parameters[2];
+    const double * parameter_rig_i = (_withRig_one) ? parameters[3] : identity;
+    const double * parameter_rig_j = (_withRig_two ? (_withSameRig ? parameters[3] : parameters[4]) : identity);    
 
     const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> iRo(parameter_rotation_i);
     const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> jRo(parameter_rotation_j);
+    const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> ciRi(parameter_rig_i);
+    const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> cjRj(parameter_rig_j);
 
     _intrinsic->setScale({parameter_intrinsics[0], parameter_intrinsics[1]});
     _intrinsic->setOffset({parameter_intrinsics[2], parameter_intrinsics[3]});
     _intrinsic->setDistortionParams({parameter_intrinsics[4], parameter_intrinsics[5], parameter_intrinsics[6]});
 
-    Eigen::Matrix3d R = jRo * iRo.transpose();
+    Eigen::Matrix3d ciRo = ciRi * iRo;
+    Eigen::Matrix3d cjRo = cjRj * jRo;
+
+    Eigen::Matrix3d R = cjRo * ciRo.transpose();
+
     geometry::Pose3 T(R, Vec3({0,0,0}));
 
     Vec2 pt_i_cam = _intrinsic->ima2cam(pt_i);
@@ -258,29 +332,57 @@ public:
     }
 
     if (jacobians[0] != nullptr) {
-      Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[0]);
+        Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[0]);
 
-      J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_B<3, 3, 3>(jRo, iRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), iRo);
+        J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_B<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_B<3, 3, 3>(ciRi, iRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), iRo);
     }
 
     if (jacobians[1] != nullptr) {
-      Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[1]);
+        Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[1]);
 
-      J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(jRo, iRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), jRo);
+        J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_AB_wrt_B<3, 3, 3>(cjRj, jRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), jRo);
     }
 
     if (jacobians[2] != nullptr) {
-      Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> J(jacobians[2]);
+        Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> J(jacobians[2]);
 
-	Eigen::Matrix<double, 4, 3> Jhomogenous = Eigen::Matrix<double, 4, 3>::Identity();
+        Eigen::Matrix<double, 4, 3> Jhomogenous = Eigen::Matrix<double, 4, 3>::Identity();
 
-      Eigen::Matrix<double, 2, 2> Jscale = _intrinsic->getDerivativeProjectWrtScale(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtScale(pt_i_undist);
-      Eigen::Matrix<double, 2, 2> Jpp = _intrinsic->getDerivativeProjectWrtPrincipalPoint(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtPt(pt_i_cam) * _intrinsic->getDerivativeIma2CamWrtPrincipalPoint();
-      Eigen::Matrix<double, 2, 3> Jdisto = _intrinsic->getDerivativeProjectWrtDisto(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtDisto(pt_i_cam);
+        Eigen::Matrix<double, 2, 2> Jscale = _intrinsic->getDerivativeProjectWrtScale(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtScale(pt_i_undist);
+        Eigen::Matrix<double, 2, 2> Jpp = _intrinsic->getDerivativeProjectWrtPrincipalPoint(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtPt(pt_i_cam) * _intrinsic->getDerivativeIma2CamWrtPrincipalPoint();
+        Eigen::Matrix<double, 2, 3> Jdisto = _intrinsic->getDerivativeProjectWrtDisto(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtDisto(pt_i_cam);
 
-      J.block<2, 2>(0, 0) = Jscale;
-      J.block<2, 2>(0, 2) = Jpp;
-      J.block<2, 3>(0, 4) = Jdisto;
+        J.block<2, 2>(0, 0) = Jscale;
+        J.block<2, 2>(0, 2) = Jpp;
+        J.block<2, 3>(0, 4) = Jdisto;
+    }
+
+    if (_withRig_one)
+    {
+        if (jacobians[3] != nullptr) {
+            Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[3]);
+
+            J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_B<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_A<3, 3, 3>(ciRi, iRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), ciRi);
+            if (_withSameRig)
+            {
+                J += _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(cjRj, jRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), cjRj);
+            }
+        }
+    }
+
+    if (_withRig_two && !_withSameRig)
+    {
+        int index = 4;
+        if (!_withRig_one)
+        {
+            index = 3;
+        }
+
+        if (jacobians[index] != nullptr) {
+            Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[index]);
+
+            J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(cjRj, jRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), cjRj);
+        }
     }
 
     return true;
@@ -290,17 +392,30 @@ private:
   Vec2 _fi;
   Vec2 _fj;
   std::shared_ptr<camera::EquiDistant> _intrinsic;
+  bool _withRig_one;
+  bool _withRig_two;
+  bool _withSameRig;
 };
 
 class CostPinHole : public ceres::CostFunction {
 public:
-  CostPinHole(Vec2 fi, Vec2 fj, std::shared_ptr<camera::Pinhole> & intrinsic) : _fi(fi), _fj(fj), _intrinsic(intrinsic) {
+  CostPinHole(Vec2 fi, Vec2 fj, std::shared_ptr<camera::Pinhole> & intrinsic, bool withRig_one, bool withRig_two, bool withSameRig) : _fi(fi), _fj(fj), _intrinsic(intrinsic), _withRig_one(withRig_one), _withRig_two(withRig_two), _withSameRig(withSameRig) {
 
     set_num_residuals(2);
 
     mutable_parameter_block_sizes()->push_back(9);
     mutable_parameter_block_sizes()->push_back(9);
-    mutable_parameter_block_sizes()->push_back(intrinsic->getParams().size());    
+    mutable_parameter_block_sizes()->push_back(intrinsic->getParams().size());
+    
+    if (withRig_one)
+    {
+        mutable_parameter_block_sizes()->push_back(9);
+    }
+
+    if (withRig_two && !withSameRig)
+    {
+        mutable_parameter_block_sizes()->push_back(9);
+    }   
   }
 
   bool Evaluate(double const * const * parameters, double * residuals, double ** jacobians) const override {
@@ -308,12 +423,17 @@ public:
     Vec2 pt_i = _fi;
     Vec2 pt_j = _fj;
 
+    const double identity[] = { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
     const double * parameter_rotation_i = parameters[0];
     const double * parameter_rotation_j = parameters[1];
     const double * parameter_intrinsics = parameters[2];
+    const double * parameter_rig_i = (_withRig_one) ? parameters[3] : identity;
+    const double * parameter_rig_j = (_withRig_two ? (_withSameRig ? parameters[3] : parameters[4]) : identity);
 
     const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> iRo(parameter_rotation_i);
     const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> jRo(parameter_rotation_j);
+    const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> ciRi(parameter_rig_i);
+    const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> cjRj(parameter_rig_j);
 
     _intrinsic->setScale({parameter_intrinsics[0], parameter_intrinsics[1]});
     _intrinsic->setOffset({parameter_intrinsics[2], parameter_intrinsics[3]});
@@ -327,7 +447,12 @@ public:
     }
     _intrinsic->setDistortionParams(distortion_params);
 
-    Eigen::Matrix3d R = jRo * iRo.transpose();
+    Eigen::Matrix3d ciRo = ciRi * iRo;
+    Eigen::Matrix3d cjRo = cjRj * jRo;
+
+
+    Eigen::Matrix3d R = cjRo * ciRo.transpose();
+
     geometry::Pose3 T(R, Vec3({0,0,0}));
 
     Vec2 pt_i_cam = _intrinsic->ima2cam(pt_i);
@@ -346,27 +471,56 @@ public:
     if (jacobians[0] != nullptr) {
       Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[0]);
 
-      J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_B<3, 3, 3>(jRo, iRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), iRo);
+      J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_B<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_B<3, 3, 3>(ciRi, iRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), iRo);
     }
 
     if (jacobians[1] != nullptr) {
       Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[1]);
 
-      J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(jRo, iRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), jRo);
+      J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_AB_wrt_B<3, 3, 3>(cjRj, jRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), jRo);
     }
 
     if (jacobians[2] != nullptr) {
-      Eigen::Map<Eigen::Matrix<double,  Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> J(jacobians[2], 2, params_size);
+        Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> J(jacobians[2], 2, params_size);
 
-      Eigen::Matrix<double, 4, 3> Jhomogenous = Eigen::Matrix<double, 4, 3>::Identity();
+        Eigen::Matrix<double, 4, 3> Jhomogenous = Eigen::Matrix<double, 4, 3>::Identity();
 
-      Eigen::Matrix<double, 2, 2> Jscale = _intrinsic->getDerivativeProjectWrtScale(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtPt(pt_i_cam) * _intrinsic->getDerivativeIma2CamWrtScale(pt_i);
-      Eigen::Matrix<double, 2, 2> Jpp = _intrinsic->getDerivativeProjectWrtPrincipalPoint(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtPt(pt_i_cam) * _intrinsic->getDerivativeIma2CamWrtPrincipalPoint();
-      Eigen::Matrix<double, 2, Eigen::Dynamic> Jdisto = _intrinsic->getDerivativeProjectWrtDisto(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtDisto(pt_i_cam);
+        Eigen::Matrix<double, 2, 2> Jscale = _intrinsic->getDerivativeProjectWrtScale(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtPt(pt_i_cam) * _intrinsic->getDerivativeIma2CamWrtScale(pt_i);
+        Eigen::Matrix<double, 2, 2> Jpp = _intrinsic->getDerivativeProjectWrtPrincipalPoint(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtPt(pt_i_cam) * _intrinsic->getDerivativeIma2CamWrtPrincipalPoint();
+        Eigen::Matrix<double, 2, Eigen::Dynamic> Jdisto = _intrinsic->getDerivativeProjectWrtDisto(T, pt_i_sphere) + _intrinsic->getDerivativeProjectWrtPoint(T, pt_i_sphere) * Jhomogenous * _intrinsic->getDerivativetoUnitSphereWrtPoint(pt_i_undist) * _intrinsic->getDerivativeRemoveDistoWrtDisto(pt_i_cam);
 
-      J.block<2, 2>(0, 0) = Jscale;
-      J.block<2, 2>(0, 2) = Jpp;
-      J.block(0, 4, 2, disto_size) = Jdisto;
+        J.block<2, 2>(0, 0) = Jscale;
+        J.block<2, 2>(0, 2) = Jpp;
+        J.block(0, 4, 2, disto_size) = Jdisto;
+    }
+
+    if (_withRig_one)
+    {
+        if (jacobians[3] != nullptr) {
+            Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[3]);
+
+            J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_B<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_At_wrt_A<3, 3>() * getJacobian_AB_wrt_A<3, 3, 3>(ciRi, iRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), ciRi);
+
+            if (_withSameRig)
+            {
+                J += _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(cjRj, jRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), cjRj);
+            }
+        }
+    }
+
+    if (_withRig_two && !_withSameRig)
+    {
+        int index = 4;
+        if (!_withRig_one)
+        {
+            index = 3;
+        }
+
+        if (jacobians[index] != nullptr) {
+            Eigen::Map<Eigen::Matrix<double, 2, 9, Eigen::RowMajor>> J(jacobians[index]);
+
+            J = _intrinsic->getDerivativeProjectWrtRotation(T, pt_i_sphere) * getJacobian_AB_wrt_A<3, 3, 3>(cjRo, ciRo.transpose()) * getJacobian_AB_wrt_A<3, 3, 3>(cjRj, jRo) * getJacobian_AB_wrt_A<3, 3, 3>(Eigen::Matrix3d::Identity(), cjRj);
+        }
     }
 
     return true;
@@ -376,6 +530,9 @@ private:
   Vec2 _fi;
   Vec2 _fj;
   std::shared_ptr<camera::Pinhole> _intrinsic;
+  bool _withRig_one;
+  bool _withRig_two;
+  bool _withSameRig;
 };
 
 namespace sfm {
@@ -544,7 +701,7 @@ void BundleAdjustmentPanoramaCeres::setSolverOptions(ceres::Solver::Options& sol
   solverOptions.sparse_linear_algebra_library_type = _ceresOptions.sparseLinearAlgebraLibraryType;
   solverOptions.minimizer_progress_to_stdout = _ceresOptions.verbose;
   solverOptions.logging_type = ceres::SILENT;
-  solverOptions.num_threads = _ceresOptions.nbThreads;
+  solverOptions.num_threads = 1;// _ceresOptions.nbThreads;
   solverOptions.max_num_iterations = 300;
 
 
@@ -557,9 +714,9 @@ void BundleAdjustmentPanoramaCeres::addExtrinsicsToProblem(const sfmData::SfMDat
 {
   const bool refineRotation = refineOptions & BundleAdjustment::REFINE_ROTATION;
 
-  const auto addPose = [&](const sfmData::CameraPose& cameraPose, bool isConstant, SO3::Matrix& poseBlock)
+  const auto addPose = [&](const geometry::Pose3& cameraPose, bool isLocked, bool isConstant, SO3::Matrix& poseBlock)
   {
-    const Mat3& R = cameraPose.getTransform().rotation();
+    const Mat3& R = cameraPose.rotation();
     poseBlock = R;
     double* poseBlockPtr = poseBlock.data();
 
@@ -567,7 +724,7 @@ void BundleAdjustmentPanoramaCeres::addExtrinsicsToProblem(const sfmData::SfMDat
     problem.AddParameterBlock(poseBlockPtr, 9, new SO3::LocalParameterization);
 
     // keep the camera extrinsics constants
-    if(cameraPose.isLocked() || isConstant || !refineRotation)
+    if(isLocked || isConstant || !refineRotation)
     {
       // set the whole parameter block as constant.
       _statistics.addState(EParameter::POSE, EParameterState::CONSTANT);
@@ -593,7 +750,27 @@ void BundleAdjustmentPanoramaCeres::addExtrinsicsToProblem(const sfmData::SfMDat
 
     const bool isConstant = (getPoseState(poseId) == EParameterState::CONSTANT);
 
-    addPose(pose, isConstant, _posesBlocks[poseId]);
+    addPose(pose.getTransform(), pose.isLocked(), isConstant, _posesBlocks[poseId]);
+  }
+
+  // setup sub-poses data
+  for (const auto& rigPair : sfmData.getRigs())
+  {
+      const IndexT rigId = rigPair.first;
+      const sfmData::Rig& rig = rigPair.second;
+      const std::size_t nbSubPoses = rig.getNbSubPoses();
+
+      for (std::size_t subPoseId = 0; subPoseId < nbSubPoses; ++subPoseId)
+      {
+          const sfmData::RigSubPose& rigSubPose = rig.getSubPose(subPoseId);
+
+          if (rigSubPose.status == sfmData::ERigSubPoseStatus::UNINITIALIZED)
+              continue;
+
+          const bool isConstant = (rigSubPose.status == sfmData::ERigSubPoseStatus::CONSTANT);
+
+          addPose(rigSubPose.pose, false, isConstant, _rigBlocks[rigId][subPoseId]);
+      }
   }
 }
 
@@ -758,28 +935,78 @@ void BundleAdjustmentPanoramaCeres::addConstraints2DToProblem(const sfmData::SfM
     /* For the moment assume a unique camera */
     assert(intrinsicBlockPtr_1 == intrinsicBlockPtr_2);
 
+    // Use rig for first view ?
+    bool withRig_1 = (view_1.isPartOfRig() && !view_1.isPoseIndependant());
+    double* rigBlockPtr_1 = nullptr;
+    if (withRig_1) 
+    {
+        rigBlockPtr_1 = _rigBlocks.at(view_1.getRigId()).at(view_1.getSubPoseId()).data();
+    }
+
+    // Use rig for second view ?
+    bool withRig_2 = (view_2.isPartOfRig() && !view_2.isPoseIndependant());
+    double* rigBlockPtr_2 = nullptr;
+    if (withRig_2) 
+    {
+        rigBlockPtr_2 = _rigBlocks.at(view_2.getRigId()).at(view_2.getSubPoseId()).data();
+    }
+
+
+    // Check if both camera use the same subpose
+    bool withSameRig = false;
+    if (withRig_1 && withRig_2)
+    {
+        if (rigBlockPtr_1 == rigBlockPtr_2)
+        {
+            withSameRig = true;
+        }
+    }
+
     std::shared_ptr<IntrinsicBase> intrinsic = sfmData.getIntrinsicsharedPtr(view_1.getIntrinsicId());
     std::shared_ptr<camera::EquiDistant> equidistant = std::dynamic_pointer_cast<camera::EquiDistant>(intrinsic);
     std::shared_ptr<camera::Pinhole> pinhole = std::dynamic_pointer_cast<camera::Pinhole>(intrinsic);
 
+    std::vector<double*> parameters_direct;
+    std::vector<double*> parameters_indirect;
+    parameters_direct.push_back(poseBlockPtr_1);
+    parameters_direct.push_back(poseBlockPtr_2);
+    parameters_indirect.push_back(poseBlockPtr_2);
+    parameters_indirect.push_back(poseBlockPtr_1);
+
+    if (withRig_1)
+    {
+        parameters_direct.push_back(rigBlockPtr_1);
+        parameters_indirect.push_back(rigBlockPtr_2);
+    }
+    if (withRig_2 && !withSameRig)
+    {
+        parameters_direct.push_back(rigBlockPtr_2);
+        parameters_indirect.push_back(rigBlockPtr_1);
+    }
+
+    parameters_direct.push_back(intrinsicBlockPtr_1);
+    parameters_indirect.push_back(intrinsicBlockPtr_1);
+
     if (equidistant != nullptr)  
     {
-      ceres::CostFunction* costFunction = new CostEquiDistant(constraint.ObservationFirst.x, constraint.ObservationSecond.x, equidistant);
-      problem.AddResidualBlock(costFunction, lossFunction, poseBlockPtr_1, poseBlockPtr_2, intrinsicBlockPtr_1);
+      
+      ceres::CostFunction* costFunction = new CostEquiDistant(constraint.ObservationFirst.x, constraint.ObservationSecond.x, equidistant, withRig_1, withRig_2, withSameRig);
+      problem.AddResidualBlock(costFunction, lossFunction, parameters_direct);
 
       /* Symmetry */
-      costFunction = new CostEquiDistant(constraint.ObservationSecond.x, constraint.ObservationFirst.x, equidistant);
-      problem.AddResidualBlock(costFunction, lossFunction, poseBlockPtr_2, poseBlockPtr_1, intrinsicBlockPtr_1);
+      costFunction = new CostEquiDistant(constraint.ObservationSecond.x, constraint.ObservationFirst.x, equidistant, withRig_2, withRig_1, withSameRig);
+      problem.AddResidualBlock(costFunction, lossFunction, parameters_indirect);
     }
     else if (pinhole != nullptr)  
     {
-      ceres::CostFunction* costFunction = new CostPinHole(constraint.ObservationFirst.x, constraint.ObservationSecond.x, pinhole);
-      problem.AddResidualBlock(costFunction, lossFunction, poseBlockPtr_1, poseBlockPtr_2, intrinsicBlockPtr_1);
+      ceres::CostFunction* costFunction = new CostPinHole(constraint.ObservationFirst.x, constraint.ObservationSecond.x, pinhole, withRig_1, withRig_2, withSameRig);
+      problem.AddResidualBlock(costFunction, lossFunction, parameters_direct);
       /* Symmetry */
-      costFunction = new CostPinHole(constraint.ObservationSecond.x, constraint.ObservationFirst.x, pinhole);
-      problem.AddResidualBlock(costFunction, lossFunction, poseBlockPtr_2, poseBlockPtr_1, intrinsicBlockPtr_1);
+      costFunction = new CostPinHole(constraint.ObservationSecond.x, constraint.ObservationFirst.x, pinhole, withRig_2, withRig_1, withSameRig);
+      problem.AddResidualBlock(costFunction, lossFunction, parameters_indirect);
     }
-    else {
+    else 
+    {
       ALICEVISION_LOG_ERROR("Incompatible camera for a 2D constraint");
       return;
     }
@@ -803,8 +1030,50 @@ void BundleAdjustmentPanoramaCeres::addRotationPriorsToProblem(const sfmData::Sf
     double * poseBlockPtr_1 = _posesBlocks.at(view_1.getPoseId()).data();
     double * poseBlockPtr_2 = _posesBlocks.at(view_2.getPoseId()).data();
 
-    ceres::CostFunction* costFunction = new CostRotationPrior(prior._second_R_first);
-    problem.AddResidualBlock(costFunction, lossFunction, poseBlockPtr_1, poseBlockPtr_2);
+    // Use rig for first view ?
+    bool withRig_1 = (view_1.isPartOfRig() && !view_1.isPoseIndependant());
+    double* rigBlockPtr_1 = nullptr;
+    if (withRig_1)
+    {
+        rigBlockPtr_1 = _rigBlocks.at(view_1.getRigId()).at(view_1.getSubPoseId()).data();
+    }
+
+
+    // Use rig for second view ?
+    bool withRig_2 = (view_2.isPartOfRig() && !view_2.isPoseIndependant());
+    double* rigBlockPtr_2 = nullptr;
+    if (withRig_2)
+    {
+        rigBlockPtr_2 = _rigBlocks.at(view_2.getRigId()).at(view_2.getSubPoseId()).data();
+    }
+
+
+    // Check if both cameras use the same subpose
+    bool withSameRig = false;
+    if (withRig_1 && withRig_2)
+    {
+        if (rigBlockPtr_1 == rigBlockPtr_2)
+        {
+            withSameRig = true;
+        }
+    }
+
+    ceres::CostFunction* costFunction = new CostRotationPrior(prior._second_R_first, withRig_1, withRig_2, withSameRig);
+
+    std::vector<double*> parameters;
+    parameters.push_back(poseBlockPtr_1);
+    parameters.push_back(poseBlockPtr_2);
+
+    if (withRig_1)
+    {
+        parameters.push_back(rigBlockPtr_1);
+    }
+    if (withRig_2 && !withSameRig)
+    {
+        parameters.push_back(rigBlockPtr_2);
+    }
+
+    problem.AddResidualBlock(costFunction, lossFunction, parameters.data(), parameters.size());
   }
 }
 

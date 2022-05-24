@@ -248,6 +248,11 @@ private:
   /// block: ceres angleAxis(3) + translation(3)
   HashMap<IndexT, SO3::Matrix> _posesBlocks; //TODO : maybe we can use boost::flat_map instead of HashMap ?
 
+  /// rig sub-poses blocks wrapper
+  /// block: ceres angleAxis(3) + translation(3)
+  HashMap<IndexT, HashMap<IndexT, SO3::Matrix>> _rigBlocks;
+
+
   /// intrinsics blocks wrapper
   /// block: intrinsics params
   HashMap<IndexT, std::vector<double>> _intrinsicsBlocks;
